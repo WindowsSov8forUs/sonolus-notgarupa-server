@@ -1,0 +1,29 @@
+# Local configuration
+config.ini
+.env
+
+# Runtime and generated repository data
+pack/
+sonolus/
+source/
+
+# Build outputs
+*.exe
+*.test
+*.out
+dist/
+build/
+
+# Temporary and cache directories
+tmp/
+temp/
+.tmp*/
+.cache/
+.gocache/
+.gomodcache/
+
+# Editor and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
