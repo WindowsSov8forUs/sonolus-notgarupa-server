@@ -39,15 +39,15 @@ const (
 )
 
 type Handler struct {
-	Engines        map[string]bool
-	Catalog        LevelCatalog
-	Publisher      LevelPublisher
-	RefreshCatalog func()
-	GenerateName   func(engine string, now time.Time) (string, error)
-	mu             sync.Mutex
+	Engines         map[string]bool
+	LevelNames      LevelNameIndex
+	Publisher       LevelPublisher
+	RefreshSnapshot func(repository.Snapshot)
+	GenerateName    func(engine string, now time.Time) (string, error)
+	mu              sync.Mutex
 }
 
-type LevelCatalog interface {
+type LevelNameIndex interface {
 	HasLevel(name string) bool
 }
 
@@ -103,43 +103,42 @@ func (h *Handler) post(ctx *gin.Context) {
 		writeError(ctx, chartConvertError(err))
 		return
 	}
-	var name string
 	if h.Publisher == nil {
 		writeError(ctx, databaseError(fmt.Errorf("level publisher is not configured")))
 		return
 	}
-	name, err = h.uploadWithGeneratedName(ctx, engine, now, form, coverData, bgmData, sonolusData, chartData)
+	name, snapshot, err := h.uploadWithGeneratedName(ctx, engine, now, form, coverData, bgmData, sonolusData, chartData)
 	if err != nil {
 		writeError(ctx, databaseError(err))
 		return
 	}
-	if h.RefreshCatalog != nil {
-		h.RefreshCatalog()
+	if h.RefreshSnapshot != nil {
+		h.RefreshSnapshot(snapshot)
 	}
 
 	ctx.JSON(http.StatusOK, gin.H{"uid": name})
 }
 
-func (h *Handler) uploadWithGeneratedName(ctx *gin.Context, engine string, now time.Time, form form, coverData []byte, bgmData []byte, sonolusData []byte, chartData []byte) (string, error) {
+func (h *Handler) uploadWithGeneratedName(ctx *gin.Context, engine string, now time.Time, form form, coverData []byte, bgmData []byte, sonolusData []byte, chartData []byte) (string, repository.Snapshot, error) {
 	for i := 0; i < maxNameAttempts; i++ {
 		name, err := h.generateUniqueName(engine, now)
 		if err != nil {
-			return "", err
+			return "", repository.Snapshot{}, err
 		}
-		err = h.uploadToRepository(ctx, name, form, engine, coverData, bgmData, sonolusData, chartData)
+		snapshot, err := h.uploadToRepository(ctx, name, form, engine, coverData, bgmData, sonolusData, chartData)
 		if errors.Is(err, repository.ErrLevelExists) {
 			continue
 		}
 		if err != nil {
-			return "", err
+			return "", repository.Snapshot{}, err
 		}
-		return name, nil
+		return name, snapshot, nil
 	}
-	return "", fmt.Errorf("failed to publish unique level name after %d attempts", maxNameAttempts)
+	return "", repository.Snapshot{}, fmt.Errorf("failed to publish unique level name after %d attempts", maxNameAttempts)
 }
 
-func (h *Handler) uploadToRepository(ctx *gin.Context, name string, form form, engine string, coverData []byte, bgmData []byte, sonolusData []byte, chartData []byte) error {
-	_, err := h.Publisher.UploadLevel(ctx.Request.Context(), repository.LevelUpload{
+func (h *Handler) uploadToRepository(ctx *gin.Context, name string, form form, engine string, coverData []byte, bgmData []byte, sonolusData []byte, chartData []byte) (repository.Snapshot, error) {
+	snapshot, err := h.Publisher.UploadLevel(ctx.Request.Context(), repository.LevelUpload{
 		Name:        name,
 		Title:       form.Title,
 		Artists:     form.Artists,
@@ -154,9 +153,9 @@ func (h *Handler) uploadToRepository(ctx *gin.Context, name string, form form, e
 		Chart:       chartData,
 	})
 	if err != nil {
-		return err
+		return repository.Snapshot{}, err
 	}
-	return nil
+	return snapshot, nil
 }
 
 func (h *Handler) preferredEngine(garupaChart chart.GarupaChart) string {
@@ -278,7 +277,7 @@ func (h *Handler) generateUniqueName(engine string, now time.Time) (string, erro
 			return "", err
 		}
 		exists := false
-		if h.Catalog != nil && h.Catalog.HasLevel(name) {
+		if h.LevelNames != nil && h.LevelNames.HasLevel(name) {
 			exists = true
 		}
 		if !exists {

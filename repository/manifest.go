@@ -10,40 +10,34 @@ import (
 	"github.com/WindowsSov8forUs/sonolus-core-go/database"
 )
 
-type Manifest struct {
-	Version     int64             `json:"version"`
-	GeneratedAt string            `json:"generatedAt"`
-	DB          database.Database `json:"db"`
+type LevelNameIndex struct {
+	mu      sync.RWMutex
+	version int64
+	names   map[string]struct{}
+	loaded  bool
 }
 
-type Catalog struct {
-	mu       sync.RWMutex
-	manifest Manifest
-	loaded   bool
+func NewLevelNameIndex() *LevelNameIndex {
+	return &LevelNameIndex{}
 }
 
-func NewCatalog() *Catalog {
-	return &Catalog{}
-}
-
-func LoadManifest(path string) (Manifest, error) {
+func LoadDatabase(path string) (database.Database, int64, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return Manifest{}, err
+		return database.Database{}, 0, err
 	}
-	var manifest Manifest
-	if err := json.Unmarshal(data, &manifest); err != nil {
-		return Manifest{}, fmt.Errorf("decode manifest: %w", err)
+	var db database.Database
+	if err := json.Unmarshal(data, &db); err != nil {
+		return database.Database{}, 0, fmt.Errorf("decode db: %w", err)
 	}
-	return manifest, nil
+	version := int64(0)
+	if info, err := os.Stat(path); err == nil {
+		version = info.ModTime().UnixMilli()
+	}
+	return db, version, nil
 }
 
-func WriteManifestAtomic(path string, manifest Manifest) error {
-	data, err := json.Marshal(manifest)
-	if err != nil {
-		return err
-	}
-	data = append(data, '\n')
+func WriteDatabaseAtomic(path string, data []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
@@ -64,31 +58,27 @@ func WriteManifestAtomic(path string, manifest Manifest) error {
 	return os.Rename(tmpPath, path)
 }
 
-func (c *Catalog) Set(manifest Manifest) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.loaded && manifest.Version < c.manifest.Version {
+func (i *LevelNameIndex) Set(snapshot Snapshot) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	if i.loaded && snapshot.Version < i.version {
 		return
 	}
-	c.manifest = manifest
-	c.loaded = true
+	names := make(map[string]struct{}, len(snapshot.DB.Levels))
+	for _, item := range snapshot.DB.Levels {
+		names[item.Name] = struct{}{}
+	}
+	i.version = snapshot.Version
+	i.names = names
+	i.loaded = true
 }
 
-func (c *Catalog) Manifest() (Manifest, bool) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.manifest, c.loaded
-}
-
-func (c *Catalog) HasLevel(name string) bool {
-	manifest, ok := c.Manifest()
-	if !ok {
+func (i *LevelNameIndex) HasLevel(name string) bool {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	if !i.loaded {
 		return false
 	}
-	for _, item := range manifest.DB.Levels {
-		if item.Name == name {
-			return true
-		}
-	}
-	return false
+	_, ok := i.names[name]
+	return ok
 }

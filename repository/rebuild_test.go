@@ -5,37 +5,40 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/WindowsSov8forUs/sonolus-core-go/database"
 )
 
-func TestRebuildCreatesManifestAndRepository(t *testing.T) {
+func TestRebuildCreatesDatabaseAndRepository(t *testing.T) {
 	root := t.TempDir()
 	source := filepath.Join(root, "source")
 	createMinimalSource(t, source)
 
-	manifest, err := Rebuild(context.Background(), RebuildOptions{
+	snapshot, err := Rebuild(context.Background(), RebuildOptions{
 		SourceDir: source,
-		DataDir:   filepath.Join(root, "data"),
+		PackDir:   filepath.Join(root, "pack"),
 		TmpDir:    filepath.Join(root, "tmp"),
-		PublicURL: "https://repo.example",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if manifest.Version == 0 || manifest.GeneratedAt == "" {
-		t.Fatalf("manifest metadata missing: %#v", manifest)
+	if snapshot.Version == 0 {
+		t.Fatalf("snapshot version missing: %#v", snapshot)
 	}
-	if manifest.DB.Info.Banner == nil || manifest.DB.Info.Banner.URL == nil {
-		t.Fatalf("banner missing: %#v", manifest.DB.Info.Banner)
+	if snapshot.DB.Info.Banner == nil || snapshot.DB.Info.Banner.URL == nil {
+		t.Fatalf("banner missing: %#v", snapshot.DB.Info.Banner)
 	}
-	url, _ := manifest.DB.Info.Banner.URL.Value()
-	if url == "" || url[:len("https://repo.example/")] != "https://repo.example/" {
-		t.Fatalf("banner url = %q", url)
+	url, _ := snapshot.DB.Info.Banner.URL.Value()
+	if url == "" || !strings.HasPrefix(url, "/sonolus/repository/") {
+		t.Fatalf("banner url = %q, want repository path", url)
 	}
-	if _, err := os.Stat(filepath.Join(root, "data", "manifest.json")); err != nil {
+	if _, err := os.Stat(filepath.Join(root, "pack", "db.json")); err != nil {
 		t.Fatal(err)
 	}
-	entries, err := os.ReadDir(filepath.Join(root, "data", "repository"))
+	entries, err := os.ReadDir(filepath.Join(root, "pack", "repository"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,33 +47,52 @@ func TestRebuildCreatesManifestAndRepository(t *testing.T) {
 	}
 }
 
-func TestRebuildFailurePreservesOldManifest(t *testing.T) {
+func TestRebuildFailurePreservesOldDatabase(t *testing.T) {
 	root := t.TempDir()
 	source := filepath.Join(root, "source")
 	createMinimalSource(t, source)
-	dataDir := filepath.Join(root, "data")
+	packDir := filepath.Join(root, "pack")
 	tmpDir := filepath.Join(root, "tmp")
 
-	first, err := Rebuild(context.Background(), RebuildOptions{SourceDir: source, DataDir: dataDir, TmpDir: tmpDir, PublicURL: "https://repo.example"})
+	first, err := Rebuild(context.Background(), RebuildOptions{SourceDir: source, PackDir: packDir, TmpDir: tmpDir})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(source, "info.json"), []byte(`{"title":{"en":1}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Rebuild(context.Background(), RebuildOptions{SourceDir: source, DataDir: dataDir, TmpDir: tmpDir, PublicURL: "https://repo.example"}); err == nil {
+	if _, err := Rebuild(context.Background(), RebuildOptions{SourceDir: source, PackDir: packDir, TmpDir: tmpDir}); err == nil {
 		t.Fatal("expected rebuild failure")
 	}
-	var stored Manifest
-	data, err := os.ReadFile(filepath.Join(dataDir, "manifest.json"))
+	var stored database.Database
+	data, err := os.ReadFile(filepath.Join(packDir, "db.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := json.Unmarshal(data, &stored); err != nil {
 		t.Fatal(err)
 	}
-	if stored.Version != first.Version {
-		t.Fatalf("manifest version = %d, want preserved %d", stored.Version, first.Version)
+	if stored.Info.Title["en"] != first.DB.Info.Title["en"] {
+		t.Fatalf("db title = %#v, want preserved %#v", stored.Info.Title, first.DB.Info.Title)
+	}
+}
+
+func TestCreatePackWorkDirUsesTimestamp(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 6, 17, 12, 34, 56, 789, time.UTC)
+	dir, err := createPackWorkDir(root, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Base(dir) != "pack-20260617T123456.000000789Z" {
+		t.Fatalf("work dir = %q, want timestamped pack dir", filepath.Base(dir))
+	}
+	again, err := createPackWorkDir(root, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Base(again) != "pack-20260617T123456.000000789Z-1" {
+		t.Fatalf("collision dir = %q, want suffixed timestamped pack dir", filepath.Base(again))
 	}
 }
 

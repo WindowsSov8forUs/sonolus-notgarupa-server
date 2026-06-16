@@ -39,9 +39,9 @@ type repositoryUpload struct {
 	Chart       []byte   `json:"chart,omitempty"`
 }
 
-func TestUploadPublishesToRepositoryAndRefreshesManifest(t *testing.T) {
+func TestUploadPublishesToRepositoryAndRefreshesSnapshot(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	cfg := newTestConfig(t, "http://127.0.0.1")
+	cfg := newTestConfig(t)
 	router, err := BuildRouter(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -70,12 +70,12 @@ func TestUploadPublishesToRepositoryAndRefreshesManifest(t *testing.T) {
 	assertLevelDescription(t, details, "Uploaded Description")
 	assertLevelTags(t, details, []string{"upload", "test"})
 	assertLevelUsesEngine(t, details, notGarupaEngineName)
-	assertRepositoryURLPrefix(t, details, "cover", "http://127.0.0.1/sonolus/repository/")
+	assertRepositoryURLPrefix(t, details, "cover", "/sonolus/repository/")
 }
 
 func TestUploadSelectsHabahiroForSingleWidth(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	cfg := newTestConfig(t, "http://127.0.0.1")
+	cfg := newTestConfig(t)
 	router, err := BuildRouter(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -97,7 +97,7 @@ func TestUploadSelectsHabahiroForSingleWidth(t *testing.T) {
 
 func TestUploadWritesLevelSourceFiles(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	cfg := newTestConfig(t, "http://127.0.0.1")
+	cfg := newTestConfig(t)
 	router, err := BuildRouter(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -110,9 +110,33 @@ func TestUploadWritesLevelSourceFiles(t *testing.T) {
 	}
 }
 
+func TestBuildRouterDoesNotSeedBuiltinCatalogWhenRepositoryUnavailable(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := config.Config{
+		Listen:                 "127.0.0.1:0",
+		RepositorySourceDir:    filepath.Join(t.TempDir(), "missing-source"),
+		RepositoryPackDir:      filepath.Join(t.TempDir(), "missing-pack"),
+		RepositoryTmpDir:       filepath.Join(t.TempDir(), "tmp"),
+		RepositoryWatchSource:  false,
+		RepositoryPollInterval: 0,
+	}
+	router, err := BuildRouter(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	info := getJSON(t, router, "/sonolus/info")
+	assertButtonPresent(t, info, "level")
+	assertButtonAbsent(t, info, "engine")
+	assertButtonAbsent(t, info, "skin")
+	assertButtonAbsent(t, info, "background")
+	assertButtonAbsent(t, info, "effect")
+	assertButtonAbsent(t, info, "particle")
+}
+
 func TestUploadRejectsInvalidTags(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	cfg := newTestConfig(t, "http://127.0.0.1")
+	cfg := newTestConfig(t)
 	router, err := BuildRouter(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -126,17 +150,15 @@ func TestUploadRejectsInvalidTags(t *testing.T) {
 	}
 }
 
-func newTestConfig(t *testing.T, publicURL string) config.Config {
+func newTestConfig(t *testing.T) config.Config {
 	t.Helper()
 	root := t.TempDir()
 	source := filepath.Join(root, "source")
 	writeTestSource(t, source)
 	return config.Config{
-		Address:                publicURL,
 		Listen:                 "127.0.0.1:0",
-		RepositoryPublicURL:    publicURL,
 		RepositorySourceDir:    source,
-		RepositoryDataDir:      filepath.Join(root, "data"),
+		RepositoryPackDir:      filepath.Join(root, "pack"),
 		RepositoryTmpDir:       filepath.Join(root, "tmp"),
 		RepositoryWatchSource:  false,
 		RepositoryPollInterval: 0,
@@ -344,6 +366,20 @@ func assertButtonPresent(t *testing.T, response map[string]any, typ string) {
 		}
 	}
 	t.Fatalf("expected button %q in response: %#v", typ, buttons)
+}
+
+func assertButtonAbsent(t *testing.T, response map[string]any, typ string) {
+	t.Helper()
+	buttons, ok := response["buttons"].([]any)
+	if !ok {
+		t.Fatalf("missing buttons in response: %#v", response)
+	}
+	for _, button := range buttons {
+		object, ok := button.(map[string]any)
+		if ok && object["type"] == typ {
+			t.Fatalf("unexpected button %q in response: %#v", typ, buttons)
+		}
+	}
 }
 
 func assertItemPresent(t *testing.T, response map[string]any, name string) {

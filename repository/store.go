@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/WindowsSov8forUs/sonolus-core-go/database"
 )
 
 type Store struct {
@@ -18,9 +20,8 @@ type Store struct {
 
 type StoreConfig struct {
 	SourceDir string
-	DataDir   string
+	PackDir   string
 	TmpDir    string
-	PublicURL string
 }
 
 type BlobFile struct {
@@ -29,8 +30,9 @@ type BlobFile struct {
 }
 
 type Snapshot struct {
-	Manifest Manifest
-	Blobs    []BlobFile
+	Version int64
+	DB      database.Database
+	Blobs   []BlobFile
 }
 
 func NewStore(cfg StoreConfig) *Store {
@@ -40,32 +42,50 @@ func NewStore(cfg StoreConfig) *Store {
 func (s *Store) Rebuild(ctx context.Context) (Snapshot, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	manifest, err := Rebuild(ctx, RebuildOptions{
+	snapshot, err := Rebuild(ctx, RebuildOptions{
 		SourceDir: s.cfg.SourceDir,
-		DataDir:   s.cfg.DataDir,
+		PackDir:   s.cfg.PackDir,
 		TmpDir:    s.cfg.TmpDir,
-		PublicURL: s.cfg.PublicURL,
 		Logger:    logger{},
 	})
 	if err != nil {
 		return Snapshot{}, err
 	}
-	return s.snapshot(manifest)
+	return s.withBlobs(snapshot)
 }
 
 func (s *Store) UploadLevel(ctx context.Context, upload LevelUpload) (Snapshot, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if err := WriteLevelSource(s.cfg.SourceDir, upload); err != nil {
 		return Snapshot{}, err
 	}
-	return s.Rebuild(ctx)
-}
-
-func (s *Store) Snapshot() (Snapshot, error) {
-	manifest, err := LoadManifest(filepath.Join(s.cfg.DataDir, "manifest.json"))
+	db, _, err := LoadDatabase(filepath.Join(s.cfg.PackDir, "db.json"))
+	if err != nil {
+		snapshot, rebuildErr := Rebuild(ctx, RebuildOptions{
+			SourceDir: s.cfg.SourceDir,
+			PackDir:   s.cfg.PackDir,
+			TmpDir:    s.cfg.TmpDir,
+			Logger:    logger{},
+		})
+		if rebuildErr != nil {
+			return Snapshot{}, err
+		}
+		return s.withBlobs(snapshot)
+	}
+	snapshot, err := AppendPackedLevel(s.cfg.SourceDir, s.cfg.PackDir, db, upload.Name)
 	if err != nil {
 		return Snapshot{}, err
 	}
-	return s.snapshot(manifest)
+	return s.withBlobs(snapshot)
+}
+
+func (s *Store) Snapshot() (Snapshot, error) {
+	db, version, err := LoadDatabase(filepath.Join(s.cfg.PackDir, "db.json"))
+	if err != nil {
+		return Snapshot{}, err
+	}
+	return s.withBlobs(Snapshot{Version: version, DB: db})
 }
 
 func (s *Store) StartWatcher(ctx context.Context, interval time.Duration, onRebuild func(Snapshot)) {
@@ -105,12 +125,13 @@ func (s *Store) StartWatcher(ctx context.Context, interval time.Duration, onRebu
 	}()
 }
 
-func (s *Store) snapshot(manifest Manifest) (Snapshot, error) {
-	blobs, err := blobFiles(filepath.Join(s.cfg.DataDir, "repository"))
+func (s *Store) withBlobs(snapshot Snapshot) (Snapshot, error) {
+	blobs, err := blobFiles(filepath.Join(s.cfg.PackDir, "repository"))
 	if err != nil {
 		return Snapshot{}, err
 	}
-	return Snapshot{Manifest: manifest, Blobs: blobs}, nil
+	snapshot.Blobs = blobs
+	return snapshot, nil
 }
 
 func blobFiles(dir string) ([]BlobFile, error) {

@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
@@ -13,63 +14,64 @@ import (
 
 type RebuildOptions struct {
 	SourceDir string
-	DataDir   string
+	PackDir   string
 	TmpDir    string
-	PublicURL string
 	Logger    packer.Logger
 }
 
-func Rebuild(ctx context.Context, options RebuildOptions) (Manifest, error) {
-	if err := os.MkdirAll(options.TmpDir, 0o755); err != nil {
-		return Manifest{}, err
-	}
-	if err := os.MkdirAll(filepath.Join(options.DataDir, "repository"), 0o755); err != nil {
-		return Manifest{}, err
+func Rebuild(ctx context.Context, options RebuildOptions) (Snapshot, error) {
+	if err := os.MkdirAll(filepath.Join(options.PackDir, "repository"), 0o755); err != nil {
+		return Snapshot{}, err
 	}
 
-	workDir, err := os.MkdirTemp(options.TmpDir, "pack-*")
+	workDir, err := createPackWorkDir(options.TmpDir, time.Now())
 	if err != nil {
-		return Manifest{}, err
+		return Snapshot{}, err
 	}
 	defer os.RemoveAll(workDir)
 
 	if err := packer.Pack(ctx, packer.Options{Input: options.SourceDir, Output: workDir, Logger: options.Logger}); err != nil {
-		return Manifest{}, err
+		return Snapshot{}, err
 	}
-	if err := copyRepository(filepath.Join(workDir, "repository"), filepath.Join(options.DataDir, "repository")); err != nil {
-		return Manifest{}, err
+	if err := copyRepository(filepath.Join(workDir, "repository"), filepath.Join(options.PackDir, "repository")); err != nil {
+		return Snapshot{}, err
 	}
 
 	dbPath := filepath.Join(workDir, "db.json")
 	raw, err := os.ReadFile(dbPath)
 	if err != nil {
-		return Manifest{}, err
+		return Snapshot{}, err
 	}
-	var dbValue any
-	if err := json.Unmarshal(raw, &dbValue); err != nil {
-		return Manifest{}, err
-	}
-	RewriteRepositoryURLs(dbValue, options.PublicURL)
-	rewritten, err := json.Marshal(dbValue)
-	if err != nil {
-		return Manifest{}, err
-	}
-
 	var db database.Database
-	if err := json.Unmarshal(rewritten, &db); err != nil {
-		return Manifest{}, err
+	if err := json.Unmarshal(raw, &db); err != nil {
+		return Snapshot{}, err
 	}
 
-	now := time.Now()
-	manifest := Manifest{
-		Version:     now.UnixMilli(),
-		GeneratedAt: now.UTC().Format(time.RFC3339Nano),
-		DB:          db,
+	if err := WriteDatabaseAtomic(filepath.Join(options.PackDir, "db.json"), raw); err != nil {
+		return Snapshot{}, err
 	}
-	if err := WriteManifestAtomic(filepath.Join(options.DataDir, "manifest.json"), manifest); err != nil {
-		return Manifest{}, err
+	return Snapshot{Version: time.Now().UnixMilli(), DB: db}, nil
+}
+
+func createPackWorkDir(tmpDir string, now time.Time) (string, error) {
+	if err := os.MkdirAll(tmpDir, 0o755); err != nil {
+		return "", err
 	}
-	return manifest, nil
+	timestamp := now.UTC().Format("20060102T150405.000000000Z")
+	path := filepath.Join(tmpDir, "pack-"+timestamp)
+	if err := os.Mkdir(path, 0o755); err == nil {
+		return path, nil
+	} else if !os.IsExist(err) {
+		return "", err
+	}
+	for attempt := 1; ; attempt++ {
+		path = filepath.Join(tmpDir, fmt.Sprintf("pack-%s-%d", timestamp, attempt))
+		if err := os.Mkdir(path, 0o755); err == nil {
+			return path, nil
+		} else if !os.IsExist(err) {
+			return "", err
+		}
+	}
 }
 
 func copyRepository(from string, to string) error {

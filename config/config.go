@@ -9,12 +9,10 @@ import (
 )
 
 type Config struct {
-	Address string
-	Listen  string
+	Listen string
 
-	RepositoryPublicURL    string
 	RepositorySourceDir    string
-	RepositoryDataDir      string
+	RepositoryPackDir      string
 	RepositoryTmpDir       string
 	RepositoryWatchSource  bool
 	RepositoryPollInterval time.Duration
@@ -22,12 +20,10 @@ type Config struct {
 
 func Load(path string) Config {
 	cfg := Config{
-		Address: "http://localhost:8000",
-		Listen:  "127.0.0.1:8000",
+		Listen: "127.0.0.1:8000",
 
-		RepositoryPublicURL:    "http://localhost:8000",
 		RepositorySourceDir:    abs("source"),
-		RepositoryDataDir:      abs("data"),
+		RepositoryPackDir:      abs("pack"),
 		RepositoryTmpDir:       abs("tmp"),
 		RepositoryWatchSource:  os.Getenv("SONOLUS_REPOSITORY_WATCH_SOURCE") != "0",
 		RepositoryPollInterval: 10 * time.Second,
@@ -35,10 +31,8 @@ func Load(path string) Config {
 	if path != "" {
 		if file, err := ini.Load(path); err == nil {
 			section := file.Section("")
-			cfg.Address = section.Key("address").MustString(cfg.Address)
-			cfg.RepositoryPublicURL = section.Key("repository-public-url").MustString(cfg.RepositoryPublicURL)
 			cfg.RepositorySourceDir = abs(section.Key("repository-source-dir").MustString(cfg.RepositorySourceDir))
-			cfg.RepositoryDataDir = abs(section.Key("repository-data-dir").MustString(cfg.RepositoryDataDir))
+			cfg.RepositoryPackDir = abs(section.Key("repository-pack-dir").MustString(cfg.RepositoryPackDir))
 			cfg.RepositoryTmpDir = abs(section.Key("repository-tmp-dir").MustString(cfg.RepositoryTmpDir))
 			cfg.RepositoryWatchSource = section.Key("repository-watch-source").MustBool(cfg.RepositoryWatchSource)
 			if value := section.Key("repository-poll-interval").String(); value != "" {
@@ -51,10 +45,8 @@ func Load(path string) Config {
 			}
 		}
 	}
-	cfg.Address = envOrDefault("SONOLUS_ADDRESS", cfg.Address)
-	cfg.RepositoryPublicURL = envOrDefault("SONOLUS_REPOSITORY_PUBLIC_URL", cfg.RepositoryPublicURL)
 	cfg.RepositorySourceDir = abs(envOrDefault("SONOLUS_REPOSITORY_SOURCE_DIR", cfg.RepositorySourceDir))
-	cfg.RepositoryDataDir = abs(envOrDefault("SONOLUS_REPOSITORY_DATA_DIR", cfg.RepositoryDataDir))
+	cfg.RepositoryPackDir = abs(envOrDefault("SONOLUS_REPOSITORY_PACK_DIR", cfg.RepositoryPackDir))
 	cfg.RepositoryTmpDir = abs(envOrDefault("SONOLUS_REPOSITORY_TMP_DIR", cfg.RepositoryTmpDir))
 	if value := os.Getenv("SONOLUS_REPOSITORY_WATCH_SOURCE"); value != "" {
 		cfg.RepositoryWatchSource = value != "0"
@@ -68,9 +60,6 @@ func Load(path string) Config {
 		cfg.Listen = listen
 	} else if port := os.Getenv("PORT"); port != "" {
 		cfg.Listen = "127.0.0.1:" + port
-	}
-	if cfg.RepositoryPublicURL == "" {
-		cfg.RepositoryPublicURL = cfg.Address
 	}
 	return cfg
 }
