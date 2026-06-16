@@ -9,57 +9,71 @@ import (
 )
 
 type Config struct {
-	Listen string
+	Server     ServerConfig
+	Repository RepositoryConfig
+}
 
-	RepositorySourceDir    string
-	RepositoryPackDir      string
-	RepositoryTmpDir       string
-	RepositoryWatchSource  bool
-	RepositoryPollInterval time.Duration
+type ServerConfig struct {
+	Listen string
+}
+
+type RepositoryConfig struct {
+	SourceDir    string
+	PackDir      string
+	TmpDir       string
+	WatchSource  bool
+	PollInterval time.Duration
 }
 
 func Load(path string) Config {
 	cfg := Config{
-		Listen: "127.0.0.1:8000",
-
-		RepositorySourceDir:    abs("source"),
-		RepositoryPackDir:      abs("pack"),
-		RepositoryTmpDir:       abs("tmp"),
-		RepositoryWatchSource:  os.Getenv("SONOLUS_REPOSITORY_WATCH_SOURCE") != "0",
-		RepositoryPollInterval: 10 * time.Second,
+		Server: ServerConfig{
+			Listen: "127.0.0.1:8000",
+		},
+		Repository: RepositoryConfig{
+			SourceDir:    abs("source"),
+			PackDir:      abs("pack"),
+			TmpDir:       abs("tmp"),
+			WatchSource:  false,
+			PollInterval: 10 * time.Second,
+		},
 	}
 	if path != "" {
 		if file, err := ini.Load(path); err == nil {
-			section := file.Section("")
-			cfg.RepositorySourceDir = abs(section.Key("repository-source-dir").MustString(cfg.RepositorySourceDir))
-			cfg.RepositoryPackDir = abs(section.Key("repository-pack-dir").MustString(cfg.RepositoryPackDir))
-			cfg.RepositoryTmpDir = abs(section.Key("repository-tmp-dir").MustString(cfg.RepositoryTmpDir))
-			cfg.RepositoryWatchSource = section.Key("repository-watch-source").MustBool(cfg.RepositoryWatchSource)
-			if value := section.Key("repository-poll-interval").String(); value != "" {
-				if duration, err := time.ParseDuration(value); err == nil {
-					cfg.RepositoryPollInterval = duration
-				}
+			server := file.Section("server")
+			if listen := server.Key("listen").String(); listen != "" {
+				cfg.Server.Listen = listen
+			} else if port := server.Key("port").String(); port != "" {
+				cfg.Server.Listen = "127.0.0.1:" + port
 			}
-			if port := section.Key("port").String(); port != "" {
-				cfg.Listen = "127.0.0.1:" + port
+
+			repository := file.Section("repository")
+			cfg.Repository.SourceDir = abs(repository.Key("source-dir").MustString(cfg.Repository.SourceDir))
+			cfg.Repository.PackDir = abs(repository.Key("pack-dir").MustString(cfg.Repository.PackDir))
+			cfg.Repository.TmpDir = abs(repository.Key("tmp-dir").MustString(cfg.Repository.TmpDir))
+			cfg.Repository.WatchSource = repository.Key("watch-source").MustBool(cfg.Repository.WatchSource)
+			if value := repository.Key("poll-interval").String(); value != "" {
+				if duration, err := time.ParseDuration(value); err == nil {
+					cfg.Repository.PollInterval = duration
+				}
 			}
 		}
 	}
-	cfg.RepositorySourceDir = abs(envOrDefault("SONOLUS_REPOSITORY_SOURCE_DIR", cfg.RepositorySourceDir))
-	cfg.RepositoryPackDir = abs(envOrDefault("SONOLUS_REPOSITORY_PACK_DIR", cfg.RepositoryPackDir))
-	cfg.RepositoryTmpDir = abs(envOrDefault("SONOLUS_REPOSITORY_TMP_DIR", cfg.RepositoryTmpDir))
+	cfg.Repository.SourceDir = abs(envOrDefault("SONOLUS_REPOSITORY_SOURCE_DIR", cfg.Repository.SourceDir))
+	cfg.Repository.PackDir = abs(envOrDefault("SONOLUS_REPOSITORY_PACK_DIR", cfg.Repository.PackDir))
+	cfg.Repository.TmpDir = abs(envOrDefault("SONOLUS_REPOSITORY_TMP_DIR", cfg.Repository.TmpDir))
 	if value := os.Getenv("SONOLUS_REPOSITORY_WATCH_SOURCE"); value != "" {
-		cfg.RepositoryWatchSource = value != "0"
+		cfg.Repository.WatchSource = value != "0"
 	}
 	if value := os.Getenv("SONOLUS_REPOSITORY_POLL_INTERVAL"); value != "" {
 		if duration, err := time.ParseDuration(value); err == nil {
-			cfg.RepositoryPollInterval = duration
+			cfg.Repository.PollInterval = duration
 		}
 	}
 	if listen := os.Getenv("SONOLUS_LISTEN_ADDR"); listen != "" {
-		cfg.Listen = listen
+		cfg.Server.Listen = listen
 	} else if port := os.Getenv("PORT"); port != "" {
-		cfg.Listen = "127.0.0.1:" + port
+		cfg.Server.Listen = "127.0.0.1:" + port
 	}
 	return cfg
 }

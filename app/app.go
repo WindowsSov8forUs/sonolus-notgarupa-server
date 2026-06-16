@@ -26,9 +26,9 @@ func BuildRouter(cfg config.Config) (*gin.Engine, error) {
 	})
 
 	store := repository.NewStore(repository.StoreConfig{
-		SourceDir: cfg.RepositorySourceDir,
-		PackDir:   cfg.RepositoryPackDir,
-		TmpDir:    cfg.RepositoryTmpDir,
+		SourceDir: cfg.Repository.SourceDir,
+		PackDir:   cfg.Repository.PackDir,
+		TmpDir:    cfg.Repository.TmpDir,
 	})
 	levelNames := repository.NewLevelNameIndex()
 	registeredRepositoryFiles := map[string]bool{}
@@ -44,8 +44,8 @@ func BuildRouter(cfg config.Config) (*gin.Engine, error) {
 		levelNames.Set(snapshot)
 		applyRepository(app, snapshot, registeredRepositoryFiles)
 	}
-	if cfg.RepositoryWatchSource {
-		store.StartWatcher(context.Background(), cfg.RepositoryPollInterval, func(snapshot repository.Snapshot) {
+	if cfg.Repository.WatchSource {
+		store.StartWatcher(context.Background(), cfg.Repository.PollInterval, func(snapshot repository.Snapshot) {
 			levelNames.Set(snapshot)
 			applyRepository(app, snapshot, registeredRepositoryFiles)
 		})

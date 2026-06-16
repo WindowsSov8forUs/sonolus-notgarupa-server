@@ -52,7 +52,7 @@ func TestUploadPublishesToRepositoryAndRefreshesSnapshot(t *testing.T) {
 
 	uid := uploadLevel(t, router, "flow")
 	assertLevelName(t, uid, "notgarupa-")
-	upload := readUploadedLevel(t, cfg.RepositorySourceDir, uid)
+	upload := readUploadedLevel(t, cfg.Repository.SourceDir, uid)
 	if upload.Title != "flow" || upload.Artists != "Uploaded Artists" || upload.Author != "Uploaded Author" {
 		t.Fatalf("upload metadata=%#v", upload)
 	}
@@ -87,7 +87,7 @@ func TestUploadSelectsHabahiroForSingleWidth(t *testing.T) {
 	]`)
 
 	assertLevelName(t, uid, "habahiro-")
-	upload := readUploadedLevel(t, cfg.RepositorySourceDir, uid)
+	upload := readUploadedLevel(t, cfg.Repository.SourceDir, uid)
 	if upload.Engine != notGarupaHabahiroEngineName {
 		t.Fatalf("engine=%q", upload.Engine)
 	}
@@ -104,7 +104,7 @@ func TestUploadWritesLevelSourceFiles(t *testing.T) {
 	}
 	uid := uploadLevel(t, router, "local-store")
 	for _, name := range []string{"item.json", "cover.png", "bgm.mp3", "data.json", "chart.json"} {
-		if _, err := os.Stat(filepath.Join(cfg.RepositorySourceDir, "levels", uid, name)); err != nil {
+		if _, err := os.Stat(filepath.Join(cfg.Repository.SourceDir, "levels", uid, name)); err != nil {
 			t.Fatalf("missing uploaded source file %s: %v", name, err)
 		}
 	}
@@ -113,12 +113,16 @@ func TestUploadWritesLevelSourceFiles(t *testing.T) {
 func TestBuildRouterDoesNotSeedBuiltinCatalogWhenRepositoryUnavailable(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cfg := config.Config{
-		Listen:                 "127.0.0.1:0",
-		RepositorySourceDir:    filepath.Join(t.TempDir(), "missing-source"),
-		RepositoryPackDir:      filepath.Join(t.TempDir(), "missing-pack"),
-		RepositoryTmpDir:       filepath.Join(t.TempDir(), "tmp"),
-		RepositoryWatchSource:  false,
-		RepositoryPollInterval: 0,
+		Server: config.ServerConfig{
+			Listen: "127.0.0.1:0",
+		},
+		Repository: config.RepositoryConfig{
+			SourceDir:    filepath.Join(t.TempDir(), "missing-source"),
+			PackDir:      filepath.Join(t.TempDir(), "missing-pack"),
+			TmpDir:       filepath.Join(t.TempDir(), "tmp"),
+			WatchSource:  false,
+			PollInterval: 0,
+		},
 	}
 	router, err := BuildRouter(cfg)
 	if err != nil {
@@ -156,12 +160,16 @@ func newTestConfig(t *testing.T) config.Config {
 	source := filepath.Join(root, "source")
 	writeTestSource(t, source)
 	return config.Config{
-		Listen:                 "127.0.0.1:0",
-		RepositorySourceDir:    source,
-		RepositoryPackDir:      filepath.Join(root, "pack"),
-		RepositoryTmpDir:       filepath.Join(root, "tmp"),
-		RepositoryWatchSource:  false,
-		RepositoryPollInterval: 0,
+		Server: config.ServerConfig{
+			Listen: "127.0.0.1:0",
+		},
+		Repository: config.RepositoryConfig{
+			SourceDir:    source,
+			PackDir:      filepath.Join(root, "pack"),
+			TmpDir:       filepath.Join(root, "tmp"),
+			WatchSource:  false,
+			PollInterval: 0,
+		},
 	}
 }
 

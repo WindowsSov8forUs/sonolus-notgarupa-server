@@ -16,8 +16,8 @@ func main() {
 		log.Fatalf("build router: %v", err)
 	}
 
-	log.Printf("sonolus-notgarupa-server listening on %s", cfg.Listen)
-	if err := router.Run(cfg.Listen); err != nil {
+	log.Printf("sonolus-notgarupa-server listening on %s", cfg.Server.Listen)
+	if err := router.Run(cfg.Server.Listen); err != nil {
 		log.Fatal(err)
 	}
 }
