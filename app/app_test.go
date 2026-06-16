@@ -50,9 +50,11 @@ func TestUploadPublishesToRepositoryAndRefreshesSnapshot(t *testing.T) {
 	info := getJSON(t, router, "/sonolus/info")
 	assertButtonPresent(t, info, "level")
 
-	uid := uploadLevel(t, router, "flow")
-	assertLevelName(t, uid, "notgarupa-")
-	upload := readUploadedLevel(t, cfg.Repository.SourceDir, uid)
+	id := uploadLevel(t, router, "flow")
+	assertUUID(t, id)
+	levelName := levelNameForUUID(notGarupaEngineName, id)
+	assertLevelName(t, levelName, notGarupaEngineName, id)
+	upload := readUploadedLevel(t, cfg.Repository.SourceDir, levelName)
 	if upload.Title != "flow" || upload.Artists != "Uploaded Artists" || upload.Author != "Uploaded Author" {
 		t.Fatalf("upload metadata=%#v", upload)
 	}
@@ -64,8 +66,8 @@ func TestUploadPublishesToRepositoryAndRefreshesSnapshot(t *testing.T) {
 	}
 
 	levelList := getJSON(t, router, "/sonolus/levels/list?localization=zhs&page=0")
-	assertItemPresent(t, levelList, uid)
-	details := getJSON(t, router, "/sonolus/levels/"+uid)
+	assertItemPresent(t, levelList, levelName)
+	details := getJSON(t, router, "/sonolus/levels/"+levelName)
 	assertLevelMetadata(t, details, 21, "Uploaded Artists", "Uploaded Author")
 	assertLevelDescription(t, details, "Uploaded Description")
 	assertLevelTags(t, details, []string{"upload", "test"})
@@ -81,17 +83,19 @@ func TestUploadSelectsHabahiroForSingleWidth(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	uid := uploadLevelWithChart(t, router, "single-width", `[
+	id := uploadLevelWithChart(t, router, "single-width", `[
 		{"type":"BPM","beat":0,"value":120},
 		{"type":"Single","beat":1,"lane":3,"width":2}
 	]`)
 
-	assertLevelName(t, uid, "habahiro-")
-	upload := readUploadedLevel(t, cfg.Repository.SourceDir, uid)
+	assertUUID(t, id)
+	levelName := levelNameForUUID(notGarupaHabahiroEngineName, id)
+	assertLevelName(t, levelName, notGarupaHabahiroEngineName, id)
+	upload := readUploadedLevel(t, cfg.Repository.SourceDir, levelName)
 	if upload.Engine != notGarupaHabahiroEngineName {
 		t.Fatalf("engine=%q", upload.Engine)
 	}
-	details := getJSON(t, router, "/sonolus/levels/"+uid)
+	details := getJSON(t, router, "/sonolus/levels/"+levelName)
 	assertLevelUsesEngine(t, details, notGarupaHabahiroEngineName)
 }
 
@@ -102,9 +106,10 @@ func TestUploadWritesLevelSourceFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	uid := uploadLevel(t, router, "local-store")
+	id := uploadLevel(t, router, "local-store")
+	levelName := levelNameForUUID(notGarupaEngineName, id)
 	for _, name := range []string{"item.json", "cover.png", "bgm.mp3", "data.json", "chart.json"} {
-		if _, err := os.Stat(filepath.Join(cfg.Repository.SourceDir, "levels", uid, name)); err != nil {
+		if _, err := os.Stat(filepath.Join(cfg.Repository.SourceDir, "levels", levelName, name)); err != nil {
 			t.Fatalf("missing uploaded source file %s: %v", name, err)
 		}
 	}
@@ -275,12 +280,12 @@ func uploadLevelWithChart(t *testing.T, handler http.Handler, title string, char
 		t.Fatalf("upload status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	var upload struct {
-		UID string `json:"uid"`
+		UUID string `json:"uuid"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &upload); err != nil {
 		t.Fatal(err)
 	}
-	return upload.UID
+	return upload.UUID
 }
 
 func uploadLevelWithChartResponse(t *testing.T, handler http.Handler, options uploadOptions) *httptest.ResponseRecorder {
@@ -350,14 +355,23 @@ func getJSON(t *testing.T, handler http.Handler, path string) map[string]any {
 	return response
 }
 
-func assertLevelName(t *testing.T, name string, prefix string) {
+func assertUUID(t *testing.T, id string) {
 	t.Helper()
-	if !strings.HasPrefix(name, prefix) {
-		t.Fatalf("level name %q does not have prefix %q", name, prefix)
+	pattern := regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}$`)
+	if !pattern.MatchString(id) {
+		t.Fatalf("uuid %q does not match expected format", id)
 	}
-	pattern := regexp.MustCompile(`^(notgarupa|habahiro)-[23456789abcdefghijkmnpqrstuvwxyz]{9}_[23456789abcdefghijkmnpqrstuvwxyz]{6}$`)
-	if !pattern.MatchString(name) {
-		t.Fatalf("level name %q does not match expected format", name)
+}
+
+func levelNameForUUID(engine string, id string) string {
+	return engine + "_" + id
+}
+
+func assertLevelName(t *testing.T, name string, engine string, id string) {
+	t.Helper()
+	want := levelNameForUUID(engine, id)
+	if name != want {
+		t.Fatalf("level name=%q, want %q", name, want)
 	}
 }
 

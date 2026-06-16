@@ -2,6 +2,7 @@ package level
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/WindowsSov8forUs/sonolus-core-go/core"
 	coreserver "github.com/WindowsSov8forUs/sonolus-core-go/core/server"
@@ -56,7 +57,7 @@ func (s *Service) listItems(search sonolus.FormValue, page int) sonolus.ItemList
 	}
 	var filtered []sonolus.LevelItemModel
 	for _, item := range s.items() {
-		if name == "" || item.Name == name {
+		if name == "" || matchesLevelName(item.Name, name) {
 			filtered = append(filtered, item)
 		}
 	}
@@ -73,14 +74,14 @@ func (s *Service) listItems(search sonolus.FormValue, page int) sonolus.ItemList
 
 func levelSearches() sonolus.FormsModel {
 	return sonolus.FormsModel{
-		"uid": {
+		"uuid": {
 			Title: localized("Search", "Search"),
 			Options: sonolus.OptionsModel{
 				"keywords": sonolus.TextOption{
 					OptionBase: sonolus.OptionBase{
-						Name: localized("UID", "UID"),
+						Name: localized("UUID", "UUID"),
 					},
-					Placeholder: localized("Enter level UID", "Enter level UID"),
+					Placeholder: localized("Enter level UUID", "Enter level UUID"),
 					Shortcuts:   []string{},
 				},
 			},
@@ -113,7 +114,7 @@ func (s *Service) Details(ctx sonolus.Context, name string) (model sonolus.ItemD
 }
 
 func searchName(search sonolus.FormValue) (string, bool) {
-	if search.Type != "quick" && search.Type != "uid" {
+	if search.Type != "quick" && search.Type != "uuid" {
 		return "", true
 	}
 	keywords, _ := search.Options["keywords"].(string)
@@ -121,6 +122,10 @@ func searchName(search sonolus.FormValue) (string, bool) {
 		return "", true
 	}
 	return keywords, true
+}
+
+func matchesLevelName(itemName string, query string) bool {
+	return itemName == query || strings.HasSuffix(itemName, "_"+query)
 }
 
 func pageCount(count int) int {

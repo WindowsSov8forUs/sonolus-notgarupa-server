@@ -17,11 +17,10 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/WindowsSov8forUs/sonolus-notgarupa-server/chart"
 	"github.com/WindowsSov8forUs/sonolus-notgarupa-server/repository"
-	"github.com/WindowsSov8forUs/sonolus-notgarupa-server/uid"
+	"github.com/WindowsSov8forUs/sonolus-notgarupa-server/uuid"
 	"github.com/gin-gonic/gin"
 	"github.com/h2non/filetype"
 	_ "golang.org/x/image/bmp"
@@ -43,7 +42,7 @@ type Handler struct {
 	LevelNames      LevelNameIndex
 	Publisher       LevelPublisher
 	RefreshSnapshot func(repository.Snapshot)
-	GenerateName    func(engine string, now time.Time) (string, error)
+	GenerateUUID    func() (string, error)
 	mu              sync.Mutex
 }
 
@@ -68,8 +67,6 @@ func (h *Handler) post(ctx *gin.Context) {
 
 	h.mu.Lock()
 	defer h.mu.Unlock()
-
-	now := time.Now()
 
 	bgmData, err := readBGM(form.BGM)
 	if err != nil {
@@ -107,7 +104,7 @@ func (h *Handler) post(ctx *gin.Context) {
 		writeError(ctx, databaseError(fmt.Errorf("level publisher is not configured")))
 		return
 	}
-	name, snapshot, err := h.uploadWithGeneratedName(ctx, engine, now, form, coverData, bgmData, sonolusData, chartData)
+	id, _, snapshot, err := h.uploadWithGeneratedUUID(ctx, engine, form, coverData, bgmData, sonolusData, chartData)
 	if err != nil {
 		writeError(ctx, databaseError(err))
 		return
@@ -116,25 +113,25 @@ func (h *Handler) post(ctx *gin.Context) {
 		h.RefreshSnapshot(snapshot)
 	}
 
-	ctx.JSON(http.StatusOK, gin.H{"uid": name})
+	ctx.JSON(http.StatusOK, gin.H{"uuid": id})
 }
 
-func (h *Handler) uploadWithGeneratedName(ctx *gin.Context, engine string, now time.Time, form form, coverData []byte, bgmData []byte, sonolusData []byte, chartData []byte) (string, repository.Snapshot, error) {
+func (h *Handler) uploadWithGeneratedUUID(ctx *gin.Context, engine string, form form, coverData []byte, bgmData []byte, sonolusData []byte, chartData []byte) (string, string, repository.Snapshot, error) {
 	for i := 0; i < maxNameAttempts; i++ {
-		name, err := h.generateUniqueName(engine, now)
+		id, name, err := h.generateUniqueLevelName(engine)
 		if err != nil {
-			return "", repository.Snapshot{}, err
+			return "", "", repository.Snapshot{}, err
 		}
 		snapshot, err := h.uploadToRepository(ctx, name, form, engine, coverData, bgmData, sonolusData, chartData)
 		if errors.Is(err, repository.ErrLevelExists) {
 			continue
 		}
 		if err != nil {
-			return "", repository.Snapshot{}, err
+			return "", "", repository.Snapshot{}, err
 		}
-		return name, snapshot, nil
+		return id, name, snapshot, nil
 	}
-	return "", repository.Snapshot{}, fmt.Errorf("failed to publish unique level name after %d attempts", maxNameAttempts)
+	return "", "", repository.Snapshot{}, fmt.Errorf("failed to publish unique level name after %d attempts", maxNameAttempts)
 }
 
 func (h *Handler) uploadToRepository(ctx *gin.Context, name string, form form, engine string, coverData []byte, bgmData []byte, sonolusData []byte, chartData []byte) (repository.Snapshot, error) {
@@ -266,25 +263,30 @@ func readChart(ctx *gin.Context) (string, error) {
 	return string(data), nil
 }
 
-func (h *Handler) generateUniqueName(engine string, now time.Time) (string, error) {
-	generate := h.GenerateName
+func (h *Handler) generateUniqueLevelName(engine string) (string, string, error) {
+	generate := h.GenerateUUID
 	if generate == nil {
-		generate = uid.Generate
+		generate = uuid.Generate
 	}
 	for i := 0; i < maxNameAttempts; i++ {
-		name, err := generate(engine, now)
+		id, err := generate()
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
+		name := levelName(engine, id)
 		exists := false
 		if h.LevelNames != nil && h.LevelNames.HasLevel(name) {
 			exists = true
 		}
 		if !exists {
-			return name, nil
+			return id, name, nil
 		}
 	}
-	return "", fmt.Errorf("failed to generate unique level name after %d attempts", maxNameAttempts)
+	return "", "", fmt.Errorf("failed to generate unique level name after %d attempts", maxNameAttempts)
+}
+
+func levelName(engine string, id string) string {
+	return engine + "_" + id
 }
 
 func readBGM(header *multipart.FileHeader) ([]byte, error) {
