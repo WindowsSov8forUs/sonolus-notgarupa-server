@@ -16,14 +16,13 @@ Useful environment variables:
 
 - `PORT=8020` listens on `127.0.0.1:8020`
 - `SONOLUS_LISTEN_ADDR=0.0.0.0:8000` allows external access
-- `SONOLUS_REPOSITORY_PUBLIC_URL=http://localhost:8000` overrides repository SRL URL rewriting
 - `SONOLUS_REPOSITORY_SOURCE_DIR=source` overrides the repository source directory
-- `SONOLUS_REPOSITORY_DATA_DIR=data` overrides the generated repository data directory
+- `SONOLUS_REPOSITORY_PACK_DIR=pack` overrides the generated repository pack directory
 - `SONOLUS_REPOSITORY_TMP_DIR=tmp` overrides temporary pack output
 - `SONOLUS_REPOSITORY_WATCH_SOURCE=0` disables source watching
-- `SONOLUS_REPOSITORY_POLL_INTERVAL=10s` overrides the manifest polling interval
+- `SONOLUS_REPOSITORY_POLL_INTERVAL=10s` overrides the repository polling interval
 
-At startup the repository store packs `source/` into `data/` and returns a snapshot. The server applies that snapshot to Sonolus routes and registers repository blobs under `/sonolus/repository/:hash`. Uploads publish through the repository interface, then the server refreshes from the latest snapshot.
+At startup the repository store packs `source/` through a temporary `tmp/pack-{timestamp}` directory into `pack/` and returns a snapshot. The server applies that snapshot to Sonolus routes and registers repository blobs under `/sonolus/repository/:hash`. Uploads write level source files, partially pack the uploaded level into `pack/repository`, append the level to `pack/db.json`, then refresh the server from that snapshot.
 
 ## Test
 
