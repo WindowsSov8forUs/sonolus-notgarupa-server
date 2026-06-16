@@ -2,6 +2,7 @@ package upload
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -39,11 +40,19 @@ const (
 
 type Handler struct {
 	Engines        map[string]bool
-	Catalog        *repository.Catalog
-	Repository     *repository.Client
+	Catalog        LevelCatalog
+	Publisher      LevelPublisher
 	RefreshCatalog func()
 	GenerateName   func(engine string, now time.Time) (string, error)
 	mu             sync.Mutex
+}
+
+type LevelCatalog interface {
+	HasLevel(name string) bool
+}
+
+type LevelPublisher interface {
+	UploadLevel(ctx context.Context, upload repository.LevelUpload) (repository.Snapshot, error)
 }
 
 func (h *Handler) Install(router gin.IRouter) {
@@ -95,8 +104,8 @@ func (h *Handler) post(ctx *gin.Context) {
 		return
 	}
 	var name string
-	if h.Repository == nil {
-		writeError(ctx, databaseError(fmt.Errorf("repository admin URL is not configured")))
+	if h.Publisher == nil {
+		writeError(ctx, databaseError(fmt.Errorf("level publisher is not configured")))
 		return
 	}
 	name, err = h.uploadWithGeneratedName(ctx, engine, now, form, coverData, bgmData, sonolusData, chartData)
@@ -118,7 +127,7 @@ func (h *Handler) uploadWithGeneratedName(ctx *gin.Context, engine string, now t
 			return "", err
 		}
 		err = h.uploadToRepository(ctx, name, form, engine, coverData, bgmData, sonolusData, chartData)
-		if errors.Is(err, repository.ErrNameCollision) {
+		if errors.Is(err, repository.ErrLevelExists) {
 			continue
 		}
 		if err != nil {
@@ -130,7 +139,7 @@ func (h *Handler) uploadWithGeneratedName(ctx *gin.Context, engine string, now t
 }
 
 func (h *Handler) uploadToRepository(ctx *gin.Context, name string, form form, engine string, coverData []byte, bgmData []byte, sonolusData []byte, chartData []byte) error {
-	_, err := h.Repository.UploadLevel(ctx.Request.Context(), repository.LevelUpload{
+	_, err := h.Publisher.UploadLevel(ctx.Request.Context(), repository.LevelUpload{
 		Name:        name,
 		Title:       form.Title,
 		Artists:     form.Artists,

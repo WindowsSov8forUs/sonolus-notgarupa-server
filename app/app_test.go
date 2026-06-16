@@ -8,12 +8,13 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
-	"github.com/WindowsSov8forUs/sonolus-core-go/core"
-	coredb "github.com/WindowsSov8forUs/sonolus-core-go/database"
 	"github.com/WindowsSov8forUs/sonolus-notgarupa-server/config"
 	"github.com/gin-gonic/gin"
 )
@@ -22,13 +23,6 @@ const (
 	notGarupaEngineName         = "notgarupa"
 	notGarupaHabahiroEngineName = "notgarupa-habahiro"
 )
-
-type fakeRepository struct {
-	t       *testing.T
-	uploads []repositoryUpload
-	levels  []coredb.DatabaseLevelItem
-	server  *httptest.Server
-}
 
 type repositoryUpload struct {
 	Name        string   `json:"name"`
@@ -45,87 +39,10 @@ type repositoryUpload struct {
 	Chart       []byte   `json:"chart,omitempty"`
 }
 
-func newFakeRepository(t *testing.T) *fakeRepository {
-	t.Helper()
-	repo := &fakeRepository{t: t}
-	mux := http.NewServeMux()
-	mux.HandleFunc("/manifest.json", repo.manifest)
-	mux.HandleFunc("/admin/levels", repo.levelsHandler)
-	repo.server = httptest.NewServer(mux)
-	t.Cleanup(repo.server.Close)
-	return repo
-}
-
-func (r *fakeRepository) manifest(w http.ResponseWriter, req *http.Request) {
-	if req.Method != http.MethodGet {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"version":     len(r.levels) + 1,
-		"generatedAt": "2026-06-15T00:00:00Z",
-		"db": map[string]any{
-			"info": map[string]any{
-				"title":       map[string]string{"en": "Repository Test"},
-				"description": map[string]string{"en": "Repository-backed test"},
-			},
-			"posts":       []any{},
-			"playlists":   []any{},
-			"levels":      r.levels,
-			"skins":       []coredb.DatabaseSkinItem{testDBSkin()},
-			"backgrounds": []coredb.DatabaseBackgroundItem{testDBBackground()},
-			"effects":     []coredb.DatabaseEffectItem{testDBEffect()},
-			"particles":   []coredb.DatabaseParticleItem{testDBParticle()},
-			"engines": []coredb.DatabaseEngineItem{
-				testDBEngine(notGarupaEngineName),
-				testDBEngine(notGarupaHabahiroEngineName),
-			},
-			"replays": []any{},
-		},
-	})
-}
-
-func (r *fakeRepository) levelsHandler(w http.ResponseWriter, req *http.Request) {
-	if req.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
-	var upload repositoryUpload
-	if err := json.NewDecoder(req.Body).Decode(&upload); err != nil {
-		r.t.Fatalf("decode upload: %v", err)
-	}
-	r.uploads = append(r.uploads, upload)
-	r.levels = append(r.levels, coredb.DatabaseLevelItem{
-		Name:          upload.Name,
-		Version:       1,
-		Rating:        float64(upload.Rating),
-		Title:         text(upload.Title),
-		Artists:       text(upload.Artists),
-		Author:        text(upload.Author),
-		Tags:          tags(upload.Tags),
-		Description:   text(upload.Description),
-		Engine:        upload.Engine,
-		UseSkin:       coredb.DatabaseUseItem{UseDefault: true},
-		UseBackground: coredb.DatabaseUseItem{UseDefault: true},
-		UseEffect:     coredb.DatabaseUseItem{UseDefault: true},
-		UseParticle:   coredb.DatabaseUseItem{UseDefault: true},
-		Cover:         testSrl(r.server.URL + "/sonolus/repository/cover"),
-		BGM:           testSrl(r.server.URL + "/sonolus/repository/bgm"),
-		Data:          testSrl(r.server.URL + "/sonolus/repository/data"),
-	})
-	_ = json.NewEncoder(w).Encode(map[string]int{"version": len(r.levels) + 1})
-}
-
 func TestUploadPublishesToRepositoryAndRefreshesManifest(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	repo := newFakeRepository(t)
-	router, err := BuildRouter(config.Config{
-		Address:                "http://127.0.0.1",
-		Listen:                 "127.0.0.1:0",
-		RepositoryAdminURL:     repo.server.URL,
-		RepositoryManifestURL:  repo.server.URL + "/manifest.json",
-		RepositoryPollInterval: 0,
-	})
+	cfg := newTestConfig(t, "http://127.0.0.1")
+	router, err := BuildRouter(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,10 +52,7 @@ func TestUploadPublishesToRepositoryAndRefreshesManifest(t *testing.T) {
 
 	uid := uploadLevel(t, router, "flow")
 	assertLevelName(t, uid, "notgarupa-")
-	if len(repo.uploads) != 1 {
-		t.Fatalf("uploads=%d, want 1", len(repo.uploads))
-	}
-	upload := repo.uploads[0]
+	upload := readUploadedLevel(t, cfg.RepositorySourceDir, uid)
 	if upload.Title != "flow" || upload.Artists != "Uploaded Artists" || upload.Author != "Uploaded Author" {
 		t.Fatalf("upload metadata=%#v", upload)
 	}
@@ -156,19 +70,13 @@ func TestUploadPublishesToRepositoryAndRefreshesManifest(t *testing.T) {
 	assertLevelDescription(t, details, "Uploaded Description")
 	assertLevelTags(t, details, []string{"upload", "test"})
 	assertLevelUsesEngine(t, details, notGarupaEngineName)
-	assertRepositoryURL(t, details, "cover", repo.server.URL+"/sonolus/repository/cover")
+	assertRepositoryURLPrefix(t, details, "cover", "http://127.0.0.1/sonolus/repository/")
 }
 
 func TestUploadSelectsHabahiroForSingleWidth(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	repo := newFakeRepository(t)
-	router, err := BuildRouter(config.Config{
-		Address:                "http://127.0.0.1",
-		Listen:                 "127.0.0.1:0",
-		RepositoryAdminURL:     repo.server.URL,
-		RepositoryManifestURL:  repo.server.URL + "/manifest.json",
-		RepositoryPollInterval: 0,
-	})
+	cfg := newTestConfig(t, "http://127.0.0.1")
+	router, err := BuildRouter(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,37 +87,33 @@ func TestUploadSelectsHabahiroForSingleWidth(t *testing.T) {
 	]`)
 
 	assertLevelName(t, uid, "habahiro-")
-	if repo.uploads[0].Engine != notGarupaHabahiroEngineName {
-		t.Fatalf("engine=%q", repo.uploads[0].Engine)
+	upload := readUploadedLevel(t, cfg.RepositorySourceDir, uid)
+	if upload.Engine != notGarupaHabahiroEngineName {
+		t.Fatalf("engine=%q", upload.Engine)
 	}
 	details := getJSON(t, router, "/sonolus/levels/"+uid)
 	assertLevelUsesEngine(t, details, notGarupaHabahiroEngineName)
 }
 
-func TestUploadRequiresRepositoryAdmin(t *testing.T) {
+func TestUploadWritesLevelSourceFiles(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	router, err := BuildRouter(config.Config{
-		Address: "http://127.0.0.1",
-		Listen:  "127.0.0.1:0",
-	})
+	cfg := newTestConfig(t, "http://127.0.0.1")
+	router, err := BuildRouter(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec := uploadLevelWithChartResponse(t, router, uploadOptions{title: "no-repo"})
-	if rec.Code != http.StatusInternalServerError {
-		t.Fatalf("upload status=%d, want 500 body=%s", rec.Code, rec.Body.String())
+	uid := uploadLevel(t, router, "local-store")
+	for _, name := range []string{"item.json", "cover.png", "bgm.mp3", "data.json", "chart.json"} {
+		if _, err := os.Stat(filepath.Join(cfg.RepositorySourceDir, "levels", uid, name)); err != nil {
+			t.Fatalf("missing uploaded source file %s: %v", name, err)
+		}
 	}
 }
 
 func TestUploadRejectsInvalidTags(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	repo := newFakeRepository(t)
-	router, err := BuildRouter(config.Config{
-		Address:               "http://127.0.0.1",
-		Listen:                "127.0.0.1:0",
-		RepositoryAdminURL:    repo.server.URL,
-		RepositoryManifestURL: repo.server.URL + "/manifest.json",
-	})
+	cfg := newTestConfig(t, "http://127.0.0.1")
+	router, err := BuildRouter(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,6 +124,102 @@ func TestUploadRejectsInvalidTags(t *testing.T) {
 			t.Fatalf("tags=%q upload status=%d, want %d body=%s", tagValue, rec.Code, http.StatusBadRequest, rec.Body.String())
 		}
 	}
+}
+
+func newTestConfig(t *testing.T, publicURL string) config.Config {
+	t.Helper()
+	root := t.TempDir()
+	source := filepath.Join(root, "source")
+	writeTestSource(t, source)
+	return config.Config{
+		Address:                publicURL,
+		Listen:                 "127.0.0.1:0",
+		RepositoryPublicURL:    publicURL,
+		RepositorySourceDir:    source,
+		RepositoryDataDir:      filepath.Join(root, "data"),
+		RepositoryTmpDir:       filepath.Join(root, "tmp"),
+		RepositoryWatchSource:  false,
+		RepositoryPollInterval: 0,
+	}
+}
+
+func readUploadedLevel(t *testing.T, sourceDir string, name string) repositoryUpload {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(sourceDir, "levels", name, "item.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw struct {
+		Name        string            `json:"name"`
+		Title       map[string]string `json:"title"`
+		Artists     map[string]string `json:"artists"`
+		Author      map[string]string `json:"author"`
+		Description map[string]string `json:"description"`
+		Rating      int               `json:"rating"`
+		Engine      string            `json:"engine"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	return repositoryUpload{
+		Name:        raw.Name,
+		Title:       raw.Title["en"],
+		Artists:     raw.Artists["en"],
+		Author:      raw.Author["en"],
+		Description: raw.Description["en"],
+		Rating:      raw.Rating,
+		Engine:      raw.Engine,
+		Cover:       readFile(t, filepath.Join(sourceDir, "levels", name, "cover.png")),
+		BGM:         readFile(t, filepath.Join(sourceDir, "levels", name, "bgm.mp3")),
+		Data:        readFile(t, filepath.Join(sourceDir, "levels", name, "data.json")),
+		Chart:       readFile(t, filepath.Join(sourceDir, "levels", name, "chart.json")),
+	}
+}
+
+func writeTestSource(t *testing.T, source string) {
+	t.Helper()
+	writeTextFile(t, filepath.Join(source, "info.json"), `{"title":{"en":"Repository Test","zhs":"Repository Test","zht":"Repository Test"},"description":{"en":"Repository-backed test","zhs":"Repository-backed test","zht":"Repository-backed test"}}`)
+	writeFile(t, filepath.Join(source, "banner.png"), testPNG())
+
+	writeItem(t, filepath.Join(source, "skins", "skin"), itemJSON(4, "Skin", "Skin"), map[string][]byte{
+		"thumbnail.png": testPNG(),
+		"data":          []byte(`{}`),
+		"texture.png":   testPNG(),
+	})
+	writeItem(t, filepath.Join(source, "backgrounds", "background"), itemJSON(2, "Background", "Background"), map[string][]byte{
+		"thumbnail.png": testPNG(),
+		"data":          []byte(`{}`),
+		"image.png":     testPNG(),
+		"configuration": []byte(`{}`),
+	})
+	writeItem(t, filepath.Join(source, "effects", "effect"), itemJSON(5, "Effect", "Effect"), map[string][]byte{
+		"thumbnail": testPNG(),
+		"data":      []byte(`{}`),
+		"audio":     []byte("audio"),
+	})
+	writeItem(t, filepath.Join(source, "particles", "particle"), itemJSON(3, "Particle", "Particle"), map[string][]byte{
+		"thumbnail": testPNG(),
+		"data":      []byte(`{}`),
+		"texture":   testPNG(),
+	})
+	for _, engine := range []string{notGarupaEngineName, notGarupaHabahiroEngineName} {
+		writeItem(t, filepath.Join(source, "engines", engine), engineItemJSON(engine), map[string][]byte{
+			"thumbnail":     testPNG(),
+			"playData":      []byte(`{}`),
+			"watchData":     []byte(`{}`),
+			"previewData":   []byte(`{}`),
+			"tutorialData":  []byte(`{}`),
+			"configuration": []byte(`{}`),
+		})
+	}
+}
+
+func itemJSON(version int, title string, subtitle string) string {
+	return `{"version":` + strconv.Itoa(version) + `,"title":{"en":"` + title + `","zhs":"` + title + `","zht":"` + title + `"},"subtitle":{"en":"` + subtitle + `","zhs":"` + subtitle + `","zht":"` + subtitle + `"},"author":{"en":"Author","zhs":"Author","zht":"Author"},"tags":[],"description":{"en":"Description","zhs":"Description","zht":"Description"}}`
+}
+
+func engineItemJSON(name string) string {
+	return `{"version":13,"title":{"en":"` + name + `","zhs":"` + name + `","zht":"` + name + `"},"subtitle":{"en":"Engine","zhs":"Engine","zht":"Engine"},"author":{"en":"Author","zhs":"Author","zht":"Author"},"tags":[],"description":{"en":"Description","zhs":"Description","zht":"Description"},"skin":"skin","background":"background","effect":"effect","particle":"particle"}`
 }
 
 type uploadOptions struct {
@@ -400,51 +400,14 @@ func assertLevelTags(t *testing.T, response map[string]any, want []string) {
 	}
 }
 
-func assertRepositoryURL(t *testing.T, response map[string]any, field string, url string) {
+func assertRepositoryURLPrefix(t *testing.T, response map[string]any, field string, prefix string) {
 	t.Helper()
 	item := response["item"].(map[string]any)
 	srl := item[field].(map[string]any)
-	if srl["url"] != url {
-		t.Fatalf("%s url=%#v, want %q", field, srl["url"], url)
+	url, ok := srl["url"].(string)
+	if !ok || !strings.HasPrefix(url, prefix) {
+		t.Fatalf("%s url=%#v, want prefix %q", field, srl["url"], prefix)
 	}
-}
-
-func tags(values []string) []coredb.DatabaseTag {
-	result := make([]coredb.DatabaseTag, 0, len(values))
-	for _, value := range values {
-		result = append(result, coredb.DatabaseTag{Title: text(value)})
-	}
-	return result
-}
-
-func testDBSkin() coredb.DatabaseSkinItem {
-	return coredb.DatabaseSkinItem{Name: "skin", Version: 1, Title: text("Skin"), Subtitle: text("Skin"), Author: text("Author"), Thumbnail: testSrl("/skin-thumb"), Data: testSrl("/skin-data"), Texture: testSrl("/skin-texture")}
-}
-
-func testDBBackground() coredb.DatabaseBackgroundItem {
-	return coredb.DatabaseBackgroundItem{Name: "background", Version: 1, Title: text("Background"), Subtitle: text("Background"), Author: text("Author"), Thumbnail: testSrl("/background-thumb"), Data: testSrl("/background-data"), Image: testSrl("/background-image"), Configuration: testSrl("/background-config")}
-}
-
-func testDBEffect() coredb.DatabaseEffectItem {
-	return coredb.DatabaseEffectItem{Name: "effect", Version: 1, Title: text("Effect"), Subtitle: text("Effect"), Author: text("Author"), Thumbnail: testSrl("/effect-thumb"), Data: testSrl("/effect-data"), Audio: testSrl("/effect-audio")}
-}
-
-func testDBParticle() coredb.DatabaseParticleItem {
-	return coredb.DatabaseParticleItem{Name: "particle", Version: 1, Title: text("Particle"), Subtitle: text("Particle"), Author: text("Author"), Thumbnail: testSrl("/particle-thumb"), Data: testSrl("/particle-data"), Texture: testSrl("/particle-texture")}
-}
-
-func testDBEngine(name string) coredb.DatabaseEngineItem {
-	return coredb.DatabaseEngineItem{Name: name, Version: 13, Title: text(name), Subtitle: text("Engine"), Author: text("Author"), Skin: "skin", Background: "background", Effect: "effect", Particle: "particle", Thumbnail: testSrl("/engine-thumb"), PlayData: testSrl("/engine-play"), WatchData: testSrl("/engine-watch"), PreviewData: testSrl("/engine-preview"), TutorialData: testSrl("/engine-tutorial"), Configuration: testSrl("/engine-config")}
-}
-
-func text(value string) coredb.LocalizationText {
-	return coredb.LocalizationText{"en": core.Text(value), "zhs": core.Text(value), "zht": core.Text(value)}
-}
-
-func testSrl(url string) core.Srl {
-	hash := core.Value("hash" + url)
-	value := core.Value(url)
-	return core.Srl{Hash: &hash, URL: &value}
 }
 
 func testWAV() []byte {
@@ -482,6 +445,38 @@ func testPNG() []byte {
 		0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae,
 		0x42, 0x60, 0x82,
 	}
+}
+
+func writeItem(t *testing.T, dir string, item string, files map[string][]byte) {
+	t.Helper()
+	writeTextFile(t, filepath.Join(dir, "item.json"), item)
+	for name, data := range files {
+		writeFile(t, filepath.Join(dir, name), data)
+	}
+}
+
+func writeTextFile(t *testing.T, path string, content string) {
+	t.Helper()
+	writeFile(t, path, []byte(content))
+}
+
+func writeFile(t *testing.T, path string, data []byte) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func readFile(t *testing.T, path string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
 }
 
 func readAll(t *testing.T, reader io.Reader) []byte {

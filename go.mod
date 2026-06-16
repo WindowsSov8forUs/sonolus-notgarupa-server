@@ -4,6 +4,7 @@ go 1.25.4
 
 require (
 	github.com/WindowsSov8forUs/sonolus-core-go v0.2.0
+	github.com/WindowsSov8forUs/sonolus-pack-go v0.1.3
 	github.com/WindowsSov8forUs/sonolus-server-go v0.1.0
 	github.com/gin-contrib/cors v1.7.7
 	github.com/gin-gonic/gin v1.12.0

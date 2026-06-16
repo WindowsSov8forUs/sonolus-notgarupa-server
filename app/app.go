@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"log"
-	"time"
 
 	"github.com/WindowsSov8forUs/sonolus-core-go/core"
 	"github.com/WindowsSov8forUs/sonolus-core-go/database"
@@ -30,16 +29,30 @@ func BuildRouter(cfg config.Config) (*gin.Engine, error) {
 	})
 	seedBuiltinCatalog(app)
 
-	var catalog *repository.Catalog
-	if cfg.RepositoryManifestURL != "" {
-		catalog = repository.NewCatalog(cfg.RepositoryManifestURL)
-		if err := catalog.Refresh(context.Background()); err != nil {
+	store := repository.NewStore(repository.StoreConfig{
+		SourceDir: cfg.RepositorySourceDir,
+		DataDir:   cfg.RepositoryDataDir,
+		TmpDir:    cfg.RepositoryTmpDir,
+		PublicURL: cfg.RepositoryPublicURL,
+	})
+	catalog := repository.NewCatalog()
+	registeredRepositoryFiles := map[string]bool{}
+	if snapshot, err := store.Rebuild(context.Background()); err != nil {
+		log.Printf("repository rebuild unavailable: %v", err)
+		if snapshot, err := store.Snapshot(); err != nil {
 			log.Printf("repository manifest unavailable: %v", err)
-		} else if manifest, ok := catalog.Manifest(); ok {
-			repository.ApplyManifest(app, manifest)
+		} else {
+			catalog.Set(snapshot.Manifest)
+			applyRepository(app, snapshot, registeredRepositoryFiles)
 		}
-		catalog.StartPolling(cfg.RepositoryPollInterval, func(manifest repository.Manifest) {
-			repository.ApplyManifest(app, manifest)
+	} else {
+		catalog.Set(snapshot.Manifest)
+		applyRepository(app, snapshot, registeredRepositoryFiles)
+	}
+	if cfg.RepositoryWatchSource {
+		store.StartWatcher(context.Background(), cfg.RepositoryPollInterval, func(snapshot repository.Snapshot) {
+			catalog.Set(snapshot.Manifest)
+			applyRepository(app, snapshot, registeredRepositoryFiles)
 		})
 	}
 
@@ -51,22 +64,17 @@ func BuildRouter(cfg config.Config) (*gin.Engine, error) {
 	router.Use(middleware.RequestSizeLimiter(30 << 20))
 	router.Use(middleware.RemoveSonolusVersionHeader())
 	(&upload.Handler{
-		Engines:    engineNames(app),
-		Catalog:    catalog,
-		Repository: repositoryClient(cfg.RepositoryAdminURL),
+		Engines:   engineNames(app),
+		Catalog:   catalog,
+		Publisher: store,
 		RefreshCatalog: func() {
-			if catalog == nil {
-				return
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-			defer cancel()
-			if err := catalog.Refresh(ctx); err != nil {
+			snapshot, err := store.Snapshot()
+			if err != nil {
 				log.Printf("refresh repository manifest after upload: %v", err)
 				return
 			}
-			if manifest, ok := catalog.Manifest(); ok {
-				repository.ApplyManifest(app, manifest)
-			}
+			catalog.Set(snapshot.Manifest)
+			applyRepository(app, snapshot, registeredRepositoryFiles)
 		},
 	}).Install(router)
 	app.Install(router)
@@ -74,11 +82,63 @@ func BuildRouter(cfg config.Config) (*gin.Engine, error) {
 	return router, nil
 }
 
-func repositoryClient(adminURL string) *repository.Client {
-	if adminURL == "" {
-		return nil
+func applyRepository(app *sonolus.Sonolus, snapshot repository.Snapshot, registered map[string]bool) {
+	applyManifest(app, snapshot.Manifest)
+	registerRepositoryFiles(app, snapshot.Blobs, registered)
+}
+
+func registerRepositoryFiles(app *sonolus.Sonolus, blobs []repository.BlobFile, registered map[string]bool) {
+	for _, blob := range blobs {
+		if registered[blob.Hash] {
+			continue
+		}
+		if _, err := app.AddFile(blob.Path, blob.Hash); err != nil {
+			log.Printf("register repository file %s: %v", blob.Hash, err)
+			continue
+		}
+		registered[blob.Hash] = true
 	}
-	return repository.NewClient(adminURL)
+}
+
+func applyManifest(app *sonolus.Sonolus, manifest repository.Manifest) {
+	app.Title = manifest.DB.Info.Title
+	app.Description = manifest.DB.Info.Description
+	app.Banner = manifest.DB.Info.Banner
+	app.Post.Items = mapItems(manifest.DB.Posts, func(item database.DatabasePostItem) sonolus.PostItemModel {
+		return sonolus.PostItemModel{DatabasePostItem: item}
+	})
+	app.Playlist.Items = mapItems(manifest.DB.Playlists, func(item database.DatabasePlaylistItem) sonolus.PlaylistItemModel {
+		return sonolus.PlaylistItemModel{DatabasePlaylistItem: item}
+	})
+	app.Level.Items = mapItems(manifest.DB.Levels, func(item database.DatabaseLevelItem) sonolus.LevelItemModel {
+		return sonolus.LevelItemModel{DatabaseLevelItem: item}
+	})
+	app.Skin.Items = mapItems(manifest.DB.Skins, func(item database.DatabaseSkinItem) sonolus.SkinItemModel {
+		return sonolus.SkinItemModel{DatabaseSkinItem: item}
+	})
+	app.Background.Items = mapItems(manifest.DB.Backgrounds, func(item database.DatabaseBackgroundItem) sonolus.BackgroundItemModel {
+		return sonolus.BackgroundItemModel{DatabaseBackgroundItem: item}
+	})
+	app.Effect.Items = mapItems(manifest.DB.Effects, func(item database.DatabaseEffectItem) sonolus.EffectItemModel {
+		return sonolus.EffectItemModel{DatabaseEffectItem: item}
+	})
+	app.Particle.Items = mapItems(manifest.DB.Particles, func(item database.DatabaseParticleItem) sonolus.ParticleItemModel {
+		return sonolus.ParticleItemModel{DatabaseParticleItem: item}
+	})
+	app.Engine.Items = mapItems(manifest.DB.Engines, func(item database.DatabaseEngineItem) sonolus.EngineItemModel {
+		return sonolus.EngineItemModel{DatabaseEngineItem: item}
+	})
+	app.Replay.Items = mapItems(manifest.DB.Replays, func(item database.DatabaseReplayItem) sonolus.ReplayItemModel {
+		return sonolus.ReplayItemModel{DatabaseReplayItem: item}
+	})
+}
+
+func mapItems[S any, T any](items []S, fn func(S) T) []T {
+	result := make([]T, 0, len(items))
+	for _, item := range items {
+		result = append(result, fn(item))
+	}
+	return result
 }
 
 func engineNames(app *sonolus.Sonolus) map[string]bool {

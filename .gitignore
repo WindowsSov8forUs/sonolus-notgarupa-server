@@ -1,16 +1,26 @@
 # Local configuration
 config.ini
+config.local.ini
 .env
+.env.*
+!.env.example
 
 # Runtime and generated repository data
 pack/
 sonolus/
 source/
+data/
+database.db
+*.db
+*.db-*
 
 # Build outputs
 *.exe
 *.test
 *.out
+*.log
+coverage.out
+coverage.txt
 dist/
 build/
 
@@ -20,6 +30,7 @@ temp/
 .tmp*/
 .cache/
 .gocache/
+.gopath/
 .gomodcache/
 
 # Editor and OS files
