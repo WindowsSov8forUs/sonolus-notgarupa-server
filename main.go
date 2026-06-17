@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"log"
 	"os"
 
@@ -9,7 +10,7 @@ import (
 )
 
 func main() {
-	cfg := config.Load(envOrDefault("SONOLUS_CONFIG", "config.ini"))
+	cfg := config.Load(configPath(os.Args[1:]))
 
 	router, err := app.BuildRouter(cfg)
 	if err != nil {
@@ -20,6 +21,15 @@ func main() {
 	if err := router.Run(cfg.Server.Listen); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func configPath(args []string) string {
+	flags := flag.NewFlagSet("sonolus-notgarupa-server", flag.ExitOnError)
+	defaultPath := envOrDefault("SONOLUS_CONFIG", "config.ini")
+	path := flags.String("config", defaultPath, "path to config file")
+	flags.StringVar(path, "c", defaultPath, "path to config file")
+	flags.Parse(args)
+	return *path
 }
 
 func envOrDefault(name string, fallback string) string {

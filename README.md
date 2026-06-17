@@ -10,10 +10,19 @@ The server exposes the Sonolus API and connects it to a local repository store. 
 go run .
 ```
 
+Use a specific config file at startup:
+
+```powershell
+go run . -c .\config.local.ini
+# or
+go run . --config .\config.local.ini
+```
+
 By default the server listens on `127.0.0.1:8000` to avoid Windows firewall prompts during local testing.
 
 Useful environment variables:
 
+- `SONOLUS_CONFIG=config.local.ini` overrides the default config file path; `-c` and `--config` take precedence
 - `PORT=8020` listens on `127.0.0.1:8020`
 - `SONOLUS_LISTEN_ADDR=0.0.0.0:8000` allows external access
 - `SONOLUS_REPOSITORY_SOURCE_DIR=source` overrides the repository source directory
