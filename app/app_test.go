@@ -122,11 +122,9 @@ func TestBuildRouterDoesNotSeedBuiltinCatalogWhenRepositoryUnavailable(t *testin
 			Listen: "127.0.0.1:0",
 		},
 		Repository: config.RepositoryConfig{
-			SourceDir:    filepath.Join(t.TempDir(), "missing-source"),
-			PackDir:      filepath.Join(t.TempDir(), "missing-pack"),
-			TmpDir:       filepath.Join(t.TempDir(), "tmp"),
-			WatchSource:  false,
-			PollInterval: 0,
+			SourceDir: filepath.Join(t.TempDir(), "missing-source"),
+			PackDir:   filepath.Join(t.TempDir(), "missing-pack"),
+			TmpDir:    filepath.Join(t.TempDir(), "tmp"),
 		},
 	}
 	router, err := BuildRouter(cfg)
@@ -169,11 +167,9 @@ func newTestConfig(t *testing.T) config.Config {
 			Listen: "127.0.0.1:0",
 		},
 		Repository: config.RepositoryConfig{
-			SourceDir:    source,
-			PackDir:      filepath.Join(root, "pack"),
-			TmpDir:       filepath.Join(root, "tmp"),
-			WatchSource:  false,
-			PollInterval: 0,
+			SourceDir: source,
+			PackDir:   filepath.Join(root, "pack"),
+			TmpDir:    filepath.Join(root, "tmp"),
 		},
 	}
 }

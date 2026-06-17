@@ -44,12 +44,6 @@ func BuildRouter(cfg config.Config) (*gin.Engine, error) {
 		levelNames.Set(snapshot)
 		applyRepository(app, snapshot, registeredRepositoryFiles)
 	}
-	if cfg.Repository.WatchSource {
-		store.StartWatcher(context.Background(), cfg.Repository.PollInterval, func(snapshot repository.Snapshot) {
-			levelNames.Set(snapshot)
-			applyRepository(app, snapshot, registeredRepositoryFiles)
-		})
-	}
 
 	level.NewServiceFromItems(func() []sonolus.LevelItemModel { return app.Level.Items }).Install(app)
 	serverinfo.Install(app)

@@ -5,9 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"strconv"
 	"sync"
-	"time"
 
 	"github.com/WindowsSov8forUs/sonolus-core-go/database"
 )
@@ -88,43 +86,6 @@ func (s *Store) Snapshot() (Snapshot, error) {
 	return s.withBlobs(Snapshot{Version: version, DB: db})
 }
 
-func (s *Store) StartWatcher(ctx context.Context, interval time.Duration, onRebuild func(Snapshot)) {
-	if interval <= 0 {
-		return
-	}
-	go func() {
-		var last string
-		var timer *time.Timer
-		for {
-			signature, err := sourceSignature(s.cfg.SourceDir)
-			if err == nil && signature != last {
-				last = signature
-				if timer != nil {
-					timer.Stop()
-				}
-				timer = time.AfterFunc(300*time.Millisecond, func() {
-					snapshot, err := s.Rebuild(ctx)
-					if err != nil {
-						log.Printf("watch rebuild failed: %v", err)
-						return
-					}
-					if onRebuild != nil {
-						onRebuild(snapshot)
-					}
-				})
-			}
-			select {
-			case <-ctx.Done():
-				if timer != nil {
-					timer.Stop()
-				}
-				return
-			case <-time.After(interval):
-			}
-		}
-	}()
-}
-
 func (s *Store) withBlobs(snapshot Snapshot) (Snapshot, error) {
 	blobs, err := blobFiles(filepath.Join(s.cfg.PackDir, "repository"))
 	if err != nil {
@@ -160,23 +121,3 @@ type logger struct{}
 
 func (logger) Info(args ...any)    { log.Print(args...) }
 func (logger) Warning(args ...any) { log.Print(args...) }
-
-func sourceSignature(root string) (string, error) {
-	var latest int64
-	var count int
-	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		info, err := entry.Info()
-		if err != nil {
-			return err
-		}
-		count++
-		if mod := info.ModTime().UnixNano(); mod > latest {
-			latest = mod
-		}
-		return nil
-	})
-	return time.Unix(0, latest).Format(time.RFC3339Nano) + ":" + strconv.Itoa(count), err
-}
