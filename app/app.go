@@ -3,8 +3,10 @@ package app
 import (
 	"context"
 	"log"
+	"net/http"
 
 	"github.com/WindowsSov8forUs/sonolus-core-go/database"
+	"github.com/WindowsSov8forUs/sonolus-notgarupa-server/buildinfo"
 	"github.com/WindowsSov8forUs/sonolus-notgarupa-server/config"
 	"github.com/WindowsSov8forUs/sonolus-notgarupa-server/level"
 	"github.com/WindowsSov8forUs/sonolus-notgarupa-server/middleware"
@@ -52,6 +54,12 @@ func BuildRouter(cfg config.Config) (*gin.Engine, error) {
 	router.Use(cors.Default())
 	router.Use(middleware.RequestSizeLimiter(30 << 20))
 	router.Use(middleware.RemoveSonolusVersionHeader())
+	router.GET("/", func(ctx *gin.Context) {
+		ctx.String(http.StatusOK, "sonolus-notgarupa-server\nVersion: %s\nStatus: OK\nSonolus API: /sonolus/info\n", buildinfo.Version)
+	})
+	router.HEAD("/", func(ctx *gin.Context) {
+		ctx.Status(http.StatusOK)
+	})
 	(&upload.Handler{
 		Engines:    engineNames(app),
 		LevelNames: levelNames,

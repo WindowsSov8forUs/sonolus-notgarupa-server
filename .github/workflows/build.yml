@@ -79,7 +79,7 @@ jobs:
         run: |
           mkdir -p dist out
           binary_name="sonolus-notgarupa-server-${{ steps.meta.outputs.version }}-${{ matrix.suffix }}${{ matrix.ext }}"
-          go build -trimpath -ldflags="-s -w" -o "out/${binary_name}" .
+          go build -trimpath -ldflags="-s -w -X github.com/WindowsSov8forUs/sonolus-notgarupa-server/buildinfo.Version=${{ steps.meta.outputs.version }}" -o "out/${binary_name}" .
           case "${{ matrix.goos }}" in
             linux|darwin)
               tar -czf "dist/sonolus-notgarupa-server-${{ steps.meta.outputs.version }}-${{ matrix.suffix }}.tar.gz" -C out "${binary_name}"

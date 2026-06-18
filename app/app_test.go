@@ -15,6 +15,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/WindowsSov8forUs/sonolus-notgarupa-server/buildinfo"
 	"github.com/WindowsSov8forUs/sonolus-notgarupa-server/config"
 	"github.com/gin-gonic/gin"
 )
@@ -139,6 +140,40 @@ func TestBuildRouterDoesNotSeedBuiltinCatalogWhenRepositoryUnavailable(t *testin
 	assertButtonAbsent(t, info, "background")
 	assertButtonAbsent(t, info, "effect")
 	assertButtonAbsent(t, info, "particle")
+}
+
+func TestRootRouteRespondsForHealthChecks(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := newTestConfig(t)
+	router, err := BuildRouter(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET / status=%d, want %d", rec.Code, http.StatusOK)
+	}
+	if !strings.Contains(rec.Body.String(), "sonolus-notgarupa-server") {
+		t.Fatalf("GET / body=%q", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Version: "+buildinfo.Version) {
+		t.Fatalf("GET / body=%q", rec.Body.String())
+	}
+
+	headRec := httptest.NewRecorder()
+	headReq := httptest.NewRequest(http.MethodHead, "/", nil)
+	router.ServeHTTP(headRec, headReq)
+
+	if headRec.Code != http.StatusOK {
+		t.Fatalf("HEAD / status=%d, want %d", headRec.Code, http.StatusOK)
+	}
+	if headRec.Body.Len() != 0 {
+		t.Fatalf("HEAD / body=%q, want empty", headRec.Body.String())
+	}
 }
 
 func TestUploadRejectsInvalidTags(t *testing.T) {
